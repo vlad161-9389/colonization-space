@@ -27,7 +27,7 @@ error InvalidAddress();
 error AuctionNotActive(uint256 _land);
 error AuctionIsActive(uint256 _land);
 error AuctionNotExists(uint256 _land);
-error NotWinner(address user); //
+error NotWinner(address user);
 error Expired(uint256 _date); 
 error InsufficientFunds();
 error AlreadyClaimed(uint256 _land); 
