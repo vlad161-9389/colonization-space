@@ -3,578 +3,893 @@ import { ethers } from "hardhat";
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import "@nomicfoundation/hardhat-chai-matchers";
 import { time } from '@nomicfoundation/hardhat-network-helpers';
+import { Signer } from "ethers";
+import { Auction } from "../typechain-types";
 
-describe("Auction", function () {
-  async function deploy () {
-    const [user1, user2, user3, user4] = await ethers.getSigners ();
-    const factoryNFT = await ethers.getContractFactory ("LandNFT");
-    const NFT = await factoryNFT.deploy(user1);
-    await NFT.waitForDeployment;
+describe("Auction Contract", function () {
+    let auction: Auction;
+    let owner: Signer;
+    let admin: Signer;
+    let oracle: Signer;
+    let user1: Signer;
+    let user2: Signer;
+    let user3: Signer;
+    let mockNFT: any; 
 
-    const factory = await ethers.getContractFactory ("Auction");
-    const Auction = await factory.deploy(user1, NFT.target);
-    await Auction.waitForDeployment;
-    await NFT.changeAdmin(Auction.target);
-    return {user1, user2, user3, user4, Auction};
-  }
-  it ("contract deploing is done", async function (){
-    
-    const {user1, user2, user3, user4, Auction} = await loadFixture (deploy);
-    expect (Auction.target).to.be.properAddress;
-    
-  });
+    async function deployAuctionFixture() {
+        [owner, admin, oracle, user1, user2, user3] = await ethers.getSigners();
+        
+        // Deploy mock NFT contract
+        const MockNFT = await ethers.getContractFactory("LandNFT");
+        const mockNFT = await MockNFT.deploy(await owner.getAddress());;
+        const nftContract = await mockNFT.getAddress();
 
-  it ("check initial contract status", async function (){
-    const {user1, user2, user3, user4, Auction} = await loadFixture (deploy);
-    const [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(curentOwner).to.eq(user1);
-    expect(admin).to.eq(user1);
-    expect(oracle).to.eq(user1);
-    expect(minDeposit).to.eq(1);
-    expect(minPrice).to.eq(10);
-    expect(mintPeriod).to.eq(604800);
-    expect(auctionNumber).to.eq(0);
-  });
+        // Deploy Auction contract
+        const Auction = await ethers.getContractFactory("Auction");
+        const auction = await Auction.deploy(await owner.getAddress(), nftContract);
+        await auction.waitForDeployment;
+        await mockNFT.changeAdmin(auction.target);
+        
+        // Set up initial roles
+        await auction.connect(owner).changeAdmin(await admin.getAddress());
+        await auction.connect(owner).changeOracle(await oracle.getAddress());
 
-  it ("change contract admin", async function (){
-    const {user1, user2, user3, user4, Auction} = await loadFixture (deploy);
-    let [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(admin).to.eq(user1.address);
-    //admin and owner changes admin, must be true
-    await Auction.changeAdmin (user2.address);
-    [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(admin).to.eq(user2.address);
-    //owner changes admin, must be true
-    await Auction.changeAdmin (user3.address);
-    [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(admin).to.eq(user3.address);
-    //admin changes admin, must be true
-    await Auction.connect(user3).changeAdmin(user1.address);
-    [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(admin).to.eq(user1.address);
-    //not admin and not owner changes admin, must be false
-    await expect(Auction.connect(user3).changeAdmin(user2.address)).to.be.revertedWith("Not administrator or owner");
-    [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(admin).to.eq(user1.address);
+        return { auction, owner, admin, oracle, user1, user2, user3, mockNFT }; // Return mockNFT here
+    }
 
-    //null address 0x0000000000000000000000000000000000000000, must be false
-    await expect(Auction.changeAdmin("0x0000000000000000000000000000000000000000")).to.be.revertedWith("Not valid address");
-    [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(admin).to.eq(user1.address);
-  });
+    beforeEach(async function () {
+        const fixture = await loadFixture(deployAuctionFixture);
+        auction = fixture.auction;
+        owner = fixture.owner;
+        admin = fixture.admin;
+        oracle = fixture.oracle;
+        user1 = fixture.user1;
+        user2 = fixture.user2;
+        user3 = fixture.user3;
+        mockNFT = fixture.mockNFT; 
+    });
 
+    describe("Deployment", function () {
+        it("Should set the right owner", async function () {
+            expect(await auction.owner()).to.equal(await owner.getAddress());
+        });
 
-  it ("change contract oracle", async function (){
-    const {user1, user2, user3, user4, Auction} = await loadFixture (deploy);
-    let [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(oracle).to.eq(user1.address);
-    //admin and owner changes oracle, must be true
-    await Auction.changeOracle (user2.address);
-    [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(oracle).to.eq(user2.address);
-    //owner changes oracle, must be true
-    await Auction.changeAdmin (user2.address);
-    await Auction.changeOracle (user3.address);
-    [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(oracle).to.eq(user3.address);
-    //admin changes oracle, must be true
-    await Auction.connect(user2).changeOracle(user1.address);
-    [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(oracle).to.eq(user1.address);
-    //not admin and not owner changes oracle, must be false
-    await expect(Auction.connect(user3).changeOracle(user2.address)).to.be.revertedWith("Not administrator or owner");
-    [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(oracle).to.eq(user1.address);
+        it("Should initialize with correct default settings", async function () {
+            const status = await auction.getContractStatus();
+            expect(status[3]).to.equal(1); // minDeposit
+            expect(status[4]).to.equal(10); // minPrice
+            expect(status[5]).to.equal(604800); // mintPeriod (7 days)
+        });
 
-    //null address 0x0000000000000000000000000000000000000000, must be false
-    await expect(Auction.changeOracle("0x0000000000000000000000000000000000000000")).to.be.revertedWith("Not valid address");
-    [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(oracle).to.eq(user1.address);
-  });
+        it("Should set admin and oracle roles correctly", async function () {
+            expect(await auction.connect(owner).changeAdmin(await admin.getAddress()));
+            expect(await auction.connect(owner).changeOracle(await oracle.getAddress()));
+            
+            const status = await auction.getContractStatus();
+            expect(status[1]).to.equal(await admin.getAddress()); // admin
+            expect(status[2]).to.equal(await oracle.getAddress()); // oracle
 
-  //change owner (Ownable)
+            // Verify no owner can't change admin/oracle
+            await expect(auction.connect(user1).changeAdmin(await user1.getAddress()))
+                .to.be.revertedWithCustomError(auction, "NotAuthorized");
+            await expect(auction.connect(user1).changeOracle(await user1.getAddress()))
+                .to.be.revertedWithCustomError(auction, "NotAuthorized");
 
-  it ("change contract owner", async function (){
-    const {user1, user2, user3, user4, Auction} = await loadFixture (deploy);
-    let [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(curentOwner).to.eq(user1.address);
-    //owner changes oracle, must be true
-    await Auction.transferOwnership (user2.address);
-    [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(curentOwner).to.eq(user2.address);
-    //owner changes oracle, must be false
-    await expect(Auction.transferOwnership (user2.address)).to.be.reverted;
-    [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(curentOwner).to.eq(user2.address);
+            // Test renouncing ownership
+            await auction.connect(owner).transferOwnership(await user1.getAddress()); 
+            let newOwner = await auction.owner();
+            expect(newOwner).to.equal(await user1.getAddress()); 
+            
+            await auction.connect(user1).renounceOwnership();
+            expect(await auction.owner()).to.equal(ethers.ZeroAddress); 
+        });
+    });
 
-    //null address 0x0000000000000000000000000000000000000000, must be false
-    await expect(Auction.changeAdmin("0x0000000000000000000000000000000000000000")).to.be.reverted;
-    [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(admin).to.eq(user1.address);
-  });
+    describe("startReceivingApplications", function () {
+        const testLandIds = [1, 2, 3];
+        const futureTimestamp = Math.floor(Date.now() / 1000) + 86400; // 1 day from now
 
+        it("Should allow owner or admin to start new auctions", async function () {
+            // Owner can start auction
+            await expect(auction.connect(owner).startReceivingApplications(futureTimestamp, testLandIds))
+            .to.changeTokenBalance(mockNFT, auction, testLandIds.length);
 
-  it ("change contract settings", async function (){
-    const {user1, user2, user3, user4, Auction} = await loadFixture (deploy);
-    //not owner or admin changes oracle, must be false
-    await expect(Auction.connect(user3).changeAuctionSettings(10, 10, 10)).to.be.revertedWith("Not administrator or owner");
-    let [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(minDeposit).to.eq(1);
-    expect(minPrice).to.eq(10);
-    expect(mintPeriod).to.eq(604800);
-    //change settings, must be true
-    await Auction.changeAuctionSettings(10, 100, 1000);
-    [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(minDeposit).to.eq(10);
-    expect(minPrice).to.eq(100);
-    expect(mintPeriod).to.eq(1000);
-  });
+            // Admin can start auction
+            await expect(auction.connect(admin).startReceivingApplications(futureTimestamp, testLandIds))
+                .to.not.be.reverted;
 
+            // Verify auction details
+            for (const landId of testLandIds) {
+                const auctionInfo = await auction.getApplicantsByLand(landId);
+                expect(auctionInfo.endTime).to.equal(futureTimestamp);
+                expect(await mockNFT.ownerOf(landId)).to.equal(await auction.getAddress());
+            }
+        });
+        
+        it("Should reject unauthorized calls", async function () {
+            await expect(auction.connect(user1).startReceivingApplications(futureTimestamp, testLandIds))
+                .to.be.revertedWithCustomError(auction, "NotAuthorized");
+        });
+
+        it("Should mint new NFTs when they don't exist", async function () {
+            // Verify NFTs don't exist
+            for (const landId of testLandIds) {
+                await expect(mockNFT.ownerOf(landId)).to.be.reverted;
+            }
+
+            // Start auction
+            await auction.connect(admin).startReceivingApplications(futureTimestamp, testLandIds);
+
+            // Verify NFTs now exist and are owned by contract
+            for (const landId of testLandIds) {
+                expect(await mockNFT.ownerOf(landId)).to.equal(await auction.getAddress());
+            }
+        });
+
+        it("Should skip already auctioned lands", async function () {
+            // Start first auction
+            const firstResult = await auction.connect(admin).startReceivingApplications(futureTimestamp, testLandIds);
+            expect(firstResult).to.emit(mockNFT, "Transfer");
+
+            // Try to start again with same lands
+            const secondResult = await auction.connect(admin).startReceivingApplications(futureTimestamp + 1000, testLandIds);
+            
+            // Should return empty array for already auctioned lands
+            expect(await auction.getAllLandsForSale()).to.have.lengthOf(testLandIds.length);
+            const status = await auction.getContractStatus();
+            expect(status[6]).to.equal(1); // auctionNumber
+        });
+
+        it("Should increment auctionNumber only when adding new auctions", async function () {
+            const initialStatus = await auction.getContractStatus();
+            
+            // First call with new lands
+            await auction.connect(admin).startReceivingApplications(futureTimestamp, testLandIds);
+            let status = await auction.getContractStatus();
+            expect(status[6]).to.equal(initialStatus[6] + BigInt(1)); // auctionNumber
+            
+            // Second call with same lands
+            await auction.connect(admin).startReceivingApplications(futureTimestamp, testLandIds);
+            status = await auction.getContractStatus();
+            expect(status[6]).to.equal(initialStatus[6] + BigInt(1)); // auctionNumber should not increment
+            
+            // Third call with new lands
+            await auction.connect(admin).startReceivingApplications(futureTimestamp, [4, 5, 6]);
+            status = await auction.getContractStatus();
+            expect(status[6]).to.equal(initialStatus[6] + BigInt(2)); // auctionNumber increments again
+        });
+
+        it("Should properly set auction parameters", async function () {
+            await auction.connect(admin).startReceivingApplications(futureTimestamp, testLandIds);
+            
+            for (const landId of testLandIds) {
+                const landAuction = await auction.getApplicantsByLand(landId);
+                expect(landAuction.minPrice).to.equal(10); // From default settings
+                expect(landAuction.endTime).to.equal(futureTimestamp);
+            }
+        });
+
+        it("Should handle empty land array", async function () {
+            await expect(auction.connect(admin).startReceivingApplications(futureTimestamp, []))
+                .to.not.be.reverted;
+            
+            expect(await auction.getAllLandsForSale()).to.have.lengthOf(0);
+        });
+
+        it("Should revert with invalid end time", async function () {
+            const pastTimestamp = Math.floor(Date.now() / 1000) - 100;
+            await expect(auction.connect(admin).startReceivingApplications(pastTimestamp, testLandIds))
+                .to.be.reverted;
+        });
+
+        it("Should create an auction if there were no bids", async function () {
+            const { auction, owner, user1, user2, oracle } = await loadFixture(deployAuctionFixture);
+            const testLandIds = [1, 2];
+            let firstBlockTime = await time.latest();
+            const futureTimestamp1 = firstBlockTime + 10;
+            // Start auction first
+            await auction.connect(admin).startReceivingApplications(futureTimestamp1, testLandIds);
+            const deposit1 = await auction.connect(user1).depositForSender();
+            const deposit2 = await auction.connect(user2).depositForSender();
+            auction.connect(user1).applicationNFT(testLandIds[0], { value: deposit1 });
+            auction.connect(user2).applicationNFT(testLandIds[0], { value: deposit2 });
+
+            while (firstBlockTime < futureTimestamp1) {
+                firstBlockTime = await time.latest();
+                await ethers.provider.send("evm_mine"); 
+            }
+
+            await auction.connect(oracle).setRating(user1.getAddress(), [10, 3, 150, 100, 10, 10, 10]);
+            await auction.connect(oracle).setRating(user2.getAddress(), [20, 3, 150, 100, 10, 10, 10]);
+            await auction.connect(oracle).setWinner();
+            let winner = await auction.connect(user1).getWinner(1);
+            expect(winner[0]).to.equal(await user2.getAddress()); // User2 has higher rating
+            
+            expect(await auction.connect(user1).ownerOf(1)).to.equal(await auction.getAddress());
+            expect(await auction.connect(user1).ownerOf(2)).to.equal(await auction.getAddress());
+
+            // creating a new auctions
+            firstBlockTime = await time.latest();
+            const futureTimestamp2 = firstBlockTime + 10;
+           
+            await auction.connect(admin).startReceivingApplications(futureTimestamp2, testLandIds);
+            expect(await auction.connect(admin).getAllLandsForSale()).to.deep.equal([2n]);
+
+            const deposit3 = await auction.connect(user1).depositForSender();
+            auction.connect(user1).applicationNFT(testLandIds[1], { value: deposit3 });
+
+            while (firstBlockTime < futureTimestamp2) {
+                firstBlockTime = await time.latest();
+                await ethers.provider.send("evm_mine"); 
+            }
+
+            await auction.connect(oracle).setWinner();
+            winner = await auction.connect(user1).getWinner(2);
+            expect(winner[0]).to.equal(await user1.getAddress());
+        });
+    });
   
+    describe("applicationNFT Function", function () {
+        const testLandIds = [1, 2, 3];
+        const futureTimestamp = BigInt(Math.floor(Date.now() / 1000)) + 86400n; // 1 day from now
 
-  it ("start new auction", async function (){
-    const {user1, user2, user3, user4, Auction} = await loadFixture (deploy);
-    const aucDate = [123456789, 234567890];
-    //not owner or admin changes oracle, must be false
-    await expect(Auction.connect(user3).startReceivingApplications (123456789, [1,2])).to.be.revertedWith("Not administrator or owner");
-    //start new auction
-    await Auction.startReceivingApplications (aucDate[0], [1,2]);
-    //check auction number and end date
-    let [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(auctionNumber).to.eq(1);
-    //check lands for sale getAllLandsForSale ()
-    let [first, second] = await Auction.getAllLandsForSale ();
-    expect(first).to.eq(1);
-    expect(second).to.eq(2);
-    //add new auction
-    await Auction.startReceivingApplications (aucDate[1], [3,4]);
-    let [, , third, fourth] = await Auction.getAllLandsForSale ();
-    expect(third).to.eq(3);
-    expect(fourth).to.eq(4);
-    //checking feilds of landsForSale 
+        beforeEach(async function () {
+            // Start auction before each test
+            await auction.connect(admin).startReceivingApplications(futureTimestamp, testLandIds);
+        });
 
-    let land = await Auction.getApplicantsByLand (1);
-    expect(land[4]).to.eq (aucDate[0]);
+        it("Should allow users to apply for auction with correct deposit", async function () {
+            const requiredDeposit = await auction.connect(user1).depositForSender();
+            
+            await expect(
+                auction.connect(user1).applicationNFT(testLandIds[0], { value: requiredDeposit }))
+                .to.changeEtherBalance(user1, -requiredDeposit); 
 
-    land = await Auction.getApplicantsByLand (3);
-    expect(land[4]).to.eq (aucDate[1]);
-    expect(land[0]).to.eq (10);
+            let [, applicants, deposits,,] = await auction.getApplicantsByLand(testLandIds[0]);
+            expect(applicants).to.have.lengthOf(1);
+            expect(applicants[0]).to.equal(await user1.getAddress());
+            expect(deposits[0]).to.equal(requiredDeposit);
+            expect(await auction.connect(user1).getContractBalance()).to.equal(requiredDeposit);
+        });
 
-    //checking repeated auction
-    land = await Auction.getApplicantsByLand (4);
-    expect(land[4]).to.eq (aucDate[1]);
-    await Auction.startReceivingApplications (aucDate[0], [3,4]);
-    expect(land[4]).to.eq (aucDate[1]);
-  });
+        it("Should reject applications with insufficient deposit", async function () {
+            const requiredDeposit = await auction.connect(user1).depositForSender();
+            const lowDeposit = requiredDeposit - 1n;
+            
+            await expect(
+                auction.connect(user1).applicationNFT(testLandIds[0], { value: lowDeposit })
+                ).to.be.revertedWithCustomError(auction, "BidTooLow");
+        });
 
-  it ("make an application for the land", async function (){
-    const {user1, user2, user3, user4, Auction} = await loadFixture (deploy);
-    let aucDate = [];
-    aucDate[0] = Math.floor((Date.now()) / 1000) - 10;
-    aucDate[1] = Math.floor((Date.now()) / 1000) + 3600;
-    await Auction.startReceivingApplications (aucDate[0], [1,2]);
-    await Auction.startReceivingApplications (aucDate[1], [3,4]);
-    //check deposite for betting
-    let deposite1 = await Auction.connect(user2).depositeForSender ();
-    expect(deposite1).to.eq(ethers.parseEther("1.0")); 
-    //check NFT price
-    let price1 = await Auction.connect(user2).NFTpriceForSender();
-    expect(price1).to.eq(ethers.parseEther("11.0"));
-     //make an application with wrong land, must be false
-    await expect(Auction.connect(user2).applicationNFT (5)).to.be.revertedWith("This land is not for sale");
-    //make an application with expired date, must be false
-    await expect(Auction.connect(user2).applicationNFT (1)).to.be.revertedWith("Time has expired, you can't make a bet");
-    //make an application with no funds, must be false
-    await expect(Auction.connect(user2).applicationNFT (3)).to.be.revertedWith("Insufficient funds");
+        it("Should prevent duplicate applications", async function () {
+            // first application
+            let deposit = await auction.connect(user1).depositForSender();
+            await auction.connect(user1).applicationNFT(testLandIds[0], { value: deposit });
+            
+            // second application
+            deposit = await auction.connect(user1).depositForSender();
+            await expect(
+                auction.connect(user1).applicationNFT(testLandIds[0], { value: deposit })
+            ).to.be.revertedWithCustomError(auction, "AlreadyApplied");
+        });
 
-    //make an application
-    await Auction.connect(user2).applicationNFT (3, {value: deposite1});
-    let answer = await Auction.connect(user2).getApplicantsByLand (3);
-    expect(answer[0]).to.eq(10);
-    expect(answer[1][0]).to.eq('0x70997970C51812dc3A010C7d01b50e0d17dc79C8');
-    expect(answer[2][0]).to.eq(deposite1);
-    expect(answer[3][0]).to.eq(price1);
+        it("Should calculate increasing deposits for multiple applications", async function () {
+            const firstDeposit = await auction.connect(user1).depositForSender();
+            await auction.connect(user1).applicationNFT(testLandIds[0], { value: firstDeposit });
+            
+            const secondDeposit = await auction.connect(user1).depositForSender();
+            expect(secondDeposit).to.be.gt(firstDeposit);
+        });
 
-    let deposite2 = await Auction.connect(user2).depositeForSender ();
-    let price2 = await Auction.connect(user2).NFTpriceForSender();
-    await Auction.connect(user2).applicationNFT (4, {value: deposite2});
-    answer = await Auction.connect(user2).getApplicantsByLand (4);
-    expect(answer[1][0]).to.eq('0x70997970C51812dc3A010C7d01b50e0d17dc79C8');
-    expect(answer[2][0]).to.eq(deposite2);
-    expect(answer[3][0]).to.eq(price2);
-    //make re-bid on the same land, must be false
-    deposite2 = await Auction.connect(user2).depositeForSender ();
-    await expect(Auction.connect(user2).applicationNFT (4, {value: deposite2})).to.be.revertedWith("Re-bids are forbidden");
+        it("Should reject applications for inactive auctions", async function () {
+            const { auction, user1, user2, oracle } = await loadFixture(deployAuctionFixture);
+            const testLandId = 1;
+            let firstBlockTime = await time.latest();
+            const futureTimestamp = firstBlockTime + 10;
+            // Start auction first
+            await auction.connect(admin).startReceivingApplications(futureTimestamp, [testLandId]);
+            const deposit1 = await auction.connect(user1).depositForSender();
+            auction.connect(user1).applicationNFT(testLandId, { value: deposit1 });
 
-    let answer2 = await Auction.connect(user2).getAllLandsForSale ();
-    expect(answer2.length).to.eq(4);
-    expect(answer2[2]).to.eq(3);
+            while (firstBlockTime < futureTimestamp) {
+                firstBlockTime = await time.latest();
+                await ethers.provider.send("evm_mine"); 
+            }
+            
+            // Should reject application for ended auction
+            const deposit2 = await auction.connect(user2).depositForSender();
+            await expect(
+                auction.connect(user2).applicationNFT(testLandId, { value: deposit2 })
+            ).to.be.revertedWithCustomError(auction, "AuctionHasEnded"); 
 
-    let deposite3 = await Auction.connect(user2).depositeForSender ();
-    await Auction.connect(user3).applicationNFT (4, {value: deposite3});
-    answer = await Auction.connect(user2).getApplicantsByLand (4);
-    expect(answer[1].length).to.eq(2);
-    expect(answer[2].length).to.eq(2);
-    expect(answer[3].length).to.eq(2);
-    expect(answer[1][0]).to.eq(user2);
-    expect(answer[1][1]).to.eq(user3);
- });
+            
+            // Finish the auction
+            await auction.connect(oracle).setWinner();
+            
+            // Should reject application for ended auction
 
-  it ("set and get ratings", async function (){
-    const {user1, user2, user3, user4, Auction} = await loadFixture (deploy);
-    const [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    expect(oracle).to.eq(user1);
-    let data1=[5, 175, 75, 10, 0, 0, 2];
-    let data2=[10, 300, 75, 10, 5, 5, 2];
-    //check oracle
-    await expect(Auction.connect(user2).setRating (user1, data1)).to.be.revertedWith("Not administrator or oracle");
-    //add data
-    await Auction.setRating (user1, data1);
-    await Auction.setRating (user2, data2);
+            await expect(
+                auction.connect(user2).applicationNFT(testLandId, { value: deposit2 })
+            ).to.be.revertedWithCustomError(auction, "AuctionNotExists"); 
+            
+        });
 
-    let ratings = await Auction.getRatings ([user1, user2]);
-    expect(ratings[0]).to.lessThan(ratings[1]);
-  });
+        it("Should include user fines in deposit calculation", async function () {
+            const { auction, owner, user1, user2, oracle } = await loadFixture(deployAuctionFixture);
+            const testLandId = 1;
+            let firstBlockTime = await time.latest();
+            const futureTimestamp1 = firstBlockTime + 10;
+            // Start auction first
+            await auction.connect(admin).startReceivingApplications(futureTimestamp1, [testLandId]);
+            const deposit1 = await auction.connect(user1).depositForSender();
+            auction.connect(user1).applicationNFT(testLandId, { value: deposit1 });
 
-  it ("set the winner", async function (){
-    const {user1, user2, user3, user4, Auction} = await loadFixture (deploy);
-    const [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    let data1=[5, 175, 75, 10, 0, 0, 2];
-    let data2=[10, 300, 75, 10, 5, 5, 2];
-    let data3=[5, 300, 75, 8, 5, 5, 2];
-    //add data
-    await Auction.setRating (user1, data1);
-    await Auction.setRating (user2, data2); 
-    await Auction.setRating (user3, data3);  
-    let aucDate = [];
-    const timeStamp = (await ethers.provider.getBlock("latest")).timestamp;
-    aucDate[0] = timeStamp + 10;
-    aucDate[1] = Math.floor((Date.now()) / 1000) + 3600;
-    await Auction.startReceivingApplications (aucDate[0], [1,2]);
-    await Auction.startReceivingApplications (aucDate[1], [3,4,5]);
-    await Auction.startReceivingApplications (aucDate[0], [6]);
-    let deposite = await Auction.connect(user1).depositeForSender ();
-    await Auction.connect(user1).applicationNFT (1, {value: deposite});
-    deposite = await Auction.connect(user2).depositeForSender ();
-    await Auction.connect(user2).applicationNFT (2, {value: deposite});
-    
-    //winner is user2
-    deposite = await Auction.connect(user1).depositeForSender ();
-    await Auction.connect(user1).applicationNFT (3, {value: deposite});
-    deposite = await Auction.connect(user2).depositeForSender ();
-    await Auction.connect(user2).applicationNFT (3, {value: deposite});
-    //winner is user2
-    deposite = await Auction.connect(user2).depositeForSender ();
-    await Auction.connect(user2).applicationNFT (4, {value: deposite});
-    deposite = await Auction.connect(user3).depositeForSender ();
-    await Auction.connect(user3).applicationNFT (4, {value: deposite});
-    //winner is user3
-    deposite = await Auction.connect(user3).depositeForSender ();
-    await Auction.connect(user3).applicationNFT (5, {value: deposite});
-    deposite = await Auction.connect(user2).depositeForSender ();
-    await Auction.connect(user2).applicationNFT (5, {value: deposite});
+            while (firstBlockTime < futureTimestamp1) {
+                firstBlockTime = await time.latest();
+                await ethers.provider.send("evm_mine"); 
+            }
+
+            await auction.connect(oracle).setRating(user1.getAddress(), [10, 3, 150, 100, 10, 10, 10]);
+            await auction.connect(oracle).setWinner();
+            await auction.connect(owner).changeAuctionSettings(1, 10, 5);
+            firstBlockTime = await time.latest();
+            const futureTimestamp2 = firstBlockTime + 5;
+
+            while (firstBlockTime < futureTimestamp2) {
+                firstBlockTime = await time.latest();
+                await ethers.provider.send("evm_mine"); 
+            }
+
+            const finesBefore = await auction.connect(user1).getFines(await user1.getAddress());
+            // add fine for user
+            await auction.connect(oracle).setFines();
+            const finesAfter = await auction.connect(user1).getFines(await user1.getAddress());
+            expect(finesAfter).to.be.gt(finesBefore);
+            
+            const depositWithFine = await auction.connect(user1).depositForSender();
+            const depositWithoutFine = await auction.connect(user2).depositForSender();
+            
+            expect(depositWithFine).to.be.gt(depositWithoutFine);
+        });
 
 
-    //check oracle
-    await expect(Auction.connect(user2).setWinner ()).to.be.revertedWith("Not administrator or oracle");
-    //check winners
-    let landForSale = await Auction.getAllLandsForSale ();
-    await Auction.setWinner ();
-    expect(await Auction.getWinner (3)).to.eq(user2);
-    expect(await Auction.getWinner (4)).to.eq(user2);
-    expect(await Auction.getWinner (5)).to.eq(user2);
+        it("Should properly track user applications", async function () {
+            const deposit = await auction.connect(user1).depositForSender();
+            await auction.connect(user1).applicationNFT(testLandIds[0], { value: deposit });
+            
+            const userApps = await auction.getUserApplications(await user1.getAddress());
+            expect(userApps).to.include(BigInt(testLandIds[0]));
+        });
 
-   
-    //check answer after deleting
-    landForSale = await Auction.getAllLandsForSale ();
-    expect(landForSale.length).to.eq(3);
-    expect(landForSale[0]).to.eq(3);
+        it("Should calculate NFT price based on user history", async function () {
+            const initialPrice = await auction.connect(user1).NFTpriceForSender();
+            
+            // After ther first application the price has to increase
+            const deposit = await auction.connect(user1).depositForSender();
+            await auction.connect(user1).applicationNFT(testLandIds[0], { value: deposit });
+            
+            const newPrice = await auction.connect(user1).NFTpriceForSender();
+            expect(newPrice).to.be.gt(initialPrice);
+        });
 
-    //check removin of lands without applicants. 
-    let answer = await Auction.getApplicantsByLand(6);
-    expect(answer[4]).to.eq(0);
-  });
+        it("Should reject applications for non-existent auctions", async function () {
+            const nonExistentLandId = 999n;
+            const deposit = await auction.connect(user1).depositForSender();
+            
+            await expect(
+                auction.connect(user1).applicationNFT(nonExistentLandId, { value: deposit })
+            ).to.be.revertedWithCustomError(auction, "AuctionNotExists");
+        });
+    });
 
-  it ("transfer to winner", async function (){
-    const {user1, user2, user3, user4, Auction} = await loadFixture (deploy);
-    const [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    
-    let data1=[5, 175, 75, 10, 0, 0, 2];
-    let data2=[10, 300, 75, 10, 5, 5, 2];
-    let data3=[5, 300, 75, 8, 5, 5, 2];
+    describe("setWinner Function", function () {
+        const testLandIds = [1, 2, 3]; 
+        const ZERO_ADDRESS = ethers.ZeroAddress;
+        let futureTimestamp = 0;
+        beforeEach(async function () {
+            futureTimestamp = await time.latest() + 50;
+            // Start auction before each test
+            await auction.connect(admin).startReceivingApplications(futureTimestamp, testLandIds);
+            await auction.connect(oracle).setRating(user1.getAddress(), [10, 3, 150, 100, 10, 10, 10]);
+            await auction.connect(oracle).setRating(user2.getAddress(), [5, 7, 100, 50, 10, 10, 10]);
+            await auction.connect(oracle).setRating(user3.getAddress(), [1, 3, 0, 0, 0, 0, 10]);
+        });
 
-    //add data
-    await Auction.setRating (user1, data1);
-    await Auction.setRating (user2, data2); 
-    await Auction.setRating (user3, data3);  
-    let aucDate = [];
-    const timeStamp = await ethers.provider.getBlock("latest");
-    aucDate[0] = timeStamp.timestamp + 6;
-    aucDate[1] = Math.floor((Date.now()) / 1000) + 3600;
-    await Auction.startReceivingApplications (aucDate[0], [1,2]);
-    await Auction.startReceivingApplications (aucDate[1], [3,4,5]);
+        it("Should revert when called by non-oracle", async function () {
+            await expect(auction.connect(user1).setWinner())
+            .to.be.revertedWithCustomError(auction, "NotOracle()");
+        });
 
-    let deposite = await Auction.connect(user1).depositeForSender ();
-    await Auction.connect(user1).applicationNFT (1, {value: deposite});
-    deposite = await Auction.connect(user2).depositeForSender ();
-    await Auction.connect(user2).applicationNFT (1, {value: deposite});
+        it("Winner check", async function () {
+            let deposit1 = await auction.connect(user1).depositForSender();
+            let deposit2 = await auction.connect(user2).depositForSender();
+            let deposit3 = await auction.connect(user3).depositForSender();
+            
+            await auction.connect(user1).applicationNFT(testLandIds[0], { value: deposit1 });
+            await auction.connect(user2).applicationNFT(testLandIds[0], { value: deposit2 });
+            await auction.connect(user3).applicationNFT(testLandIds[0], { value: deposit3 });
 
-    deposite = await Auction.connect(user2).depositeForSender ();
-    await Auction.connect(user2).applicationNFT (3, {value: deposite});
-    deposite = await Auction.connect(user3).depositeForSender ();
-    await Auction.connect(user3).applicationNFT (3, {value: deposite});
+            await auction.connect(oracle).setWinner();
 
-    await Auction.setWinner ();
-    
-    //now finished auction, must be false
-    await expect(Auction.connect(user2).transferLandToWinner (3)).to.be.revertedWith("Auction has not been finished yet");
+            // Check winners set
+            let winner1 = await auction.getWinner(testLandIds[0]);
+            let winner2 = await auction.getWinner(testLandIds[1]);
+            let winner3 = await auction.getWinner(testLandIds[2]);
+            expect(winner1[0]).to.equal(await user1.getAddress());
+            expect(winner2[0]).to.equal(ZERO_ADDRESS);
+            expect(winner3[0]).to.equal(ZERO_ADDRESS);
 
-    //insufficient funds, must be false
-    await expect(Auction.connect(user2).transferLandToWinner (1)).to.be.revertedWith("Insufficient funds");
-    //transfer not to winner, must be false
-    let price = await Auction.connect(user3).NFTpriceForSender ();
-    await expect(Auction.connect(user3).transferLandToWinner (1, {value: price})).to.be.revertedWith("You are not a winner");
-    //already transfered, must be false
-    price = await Auction.connect(user2).NFTpriceForSender ();
-    expect((await Auction.getUserApplications(user2)).length).to.eq(2);
-    await Auction.connect(user2).transferLandToWinner (1, {value: price});
-    await expect(Auction.connect(user2).transferLandToWinner (1, {value: price})).to.be.revertedWith("The land is already bought");
-    
+            deposit2 = await auction.connect(user2).depositForSender();
+            await auction.connect(user2).applicationNFT(testLandIds[1], { value: deposit2 });
+            await auction.connect(oracle).setWinner();
+           
+            winner2 = await auction.getWinner(testLandIds[1]);
+            winner3 = await auction.getWinner(testLandIds[2]);
+            expect(winner2[0]).to.equal(await user2.getAddress());
+            expect(winner3[0]).to.equal(ZERO_ADDRESS);
 
-    //expired time, must be false
-    await Auction.changeAuctionSettings (1, 10, 1);
-    price = await Auction.connect(user2).NFTpriceForSender ();
-    await expect(Auction.connect(user2).transferLandToWinner (1)).to.be.revertedWith("Time has expired");
+            deposit1 = await auction.connect(user1).depositForSender();
+            await auction.connect(user1).applicationNFT(testLandIds[1], { value: deposit1 });
+            await auction.connect(oracle).setWinner();
+            winner2 = await auction.getWinner(testLandIds[1]);
+            expect(winner2[0]).to.equal(await user1.getAddress());
 
-    //Checking ownership of NFT3
-    expect(await Auction.connect(user2).ownerOf (1)).to.eq(user2);
-    //Checking user application array
-    expect((await Auction.getUserApplications(user2)).length).to.eq(1);
-  });
+            deposit3 = await auction.connect(user3).depositForSender();
+            await auction.connect(user3).applicationNFT(testLandIds[2], { value: deposit3 });
+            await auction.connect(oracle).setWinner();
+            winner3 = await auction.getWinner(testLandIds[2])
+            expect(winner3[0]).to.equal(await user3.getAddress());
 
-  it ("winner fines", async function (){
-    const {user1, user2, user3, user4, Auction} = await loadFixture (deploy);
-    const [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    
-    let data1=[5, 175, 75, 10, 0, 0, 2];
-    let data2=[10, 300, 75, 10, 5, 5, 2];
-    let data3=[5, 300, 75, 8, 5, 5, 2];
-    //add data
-    await Auction.setRating (user1, data1);
-    await Auction.setRating (user2, data2); 
-    await Auction.setRating (user3, data3);  
-    let aucDate = [];
-    const timeStamp = (await ethers.provider.getBlock("latest")).timestamp;
-    aucDate[0] = timeStamp + 5;
-    aucDate[1] = Math.floor((Date.now()) / 1000) + 3600;
-    await Auction.startReceivingApplications (aucDate[0], [1,2]);
-    await Auction.startReceivingApplications (aucDate[1], [3,4,5]);
+            deposit2 = await auction.connect(user2).depositForSender();
+            await auction.connect(user2).applicationNFT(testLandIds[2], { value: deposit2 });
+            await auction.connect(oracle).setWinner();
+            winner3 = await auction.getWinner(testLandIds[2])
+            expect(winner3[0]).to.equal(await user2.getAddress());
 
-    let deposite = await Auction.connect(user1).depositeForSender ();
-    await Auction.connect(user1).applicationNFT (1, {value: deposite});
-    deposite = await Auction.connect(user2).depositeForSender ();
-    await Auction.connect(user2).applicationNFT (1, {value: deposite});
+            deposit1 = await auction.connect(user1).depositForSender();
+            await auction.connect(user1).applicationNFT(testLandIds[2], { value: deposit1 });
+            await auction.connect(oracle).setWinner();
+            winner3 = await auction.getWinner(testLandIds[2])
+            expect(winner3[0]).to.equal(await user1.getAddress());
+        });
 
-    deposite = await Auction.connect(user2).depositeForSender ();
-    await Auction.connect(user2).applicationNFT (3, {value: deposite});
-    deposite = await Auction.connect(user3).depositeForSender ();
-    await Auction.connect(user3).applicationNFT (3, {value: deposite});
+        it("Should move ended auctions to transfer array", async function () {
+            let deposit1 = await auction.connect(user1).depositForSender();
+            let deposit2 = await auction.connect(user2).depositForSender();
+            let deposit3 = await auction.connect(user3).depositForSender();
+            
+            await auction.connect(user1).applicationNFT(testLandIds[0], { value: deposit1 });
+            await auction.connect(user2).applicationNFT(testLandIds[0], { value: deposit2 });
+            await auction.connect(user3).applicationNFT(testLandIds[0], { value: deposit3 });
 
-    await Auction.setWinner ();
-    await Auction.changeAuctionSettings (1, 10, 1);
+            let blockTime = await time.latest();
+            const localFutureTimestamp = blockTime + (futureTimestamp - blockTime + 1);
 
-    //user has no fines
-    expect(await Auction.getFines (user2)).to.eq(0);
-    //deposite 1+2 = 3
-    expect(await Auction.connect(user2).depositeForSender ()).to.eq(ethers.parseEther('3'));
-    //user has one fine
-    await Auction.setFines ();
-    expect(await Auction.getFines (user2)).to.eq(1);
-  //deposite 1+2+2 = 5
-    expect(await Auction.connect(user2).depositeForSender ()).to.eq(ethers.parseEther('5'));
-  });
+            while (blockTime < localFutureTimestamp) {
+                 blockTime = await time.latest();
+                await ethers.provider.send("evm_mine"); 
+            }
 
-  it ("NFT price", async function (){
-    const {user1, user2, user3, user4, Auction} = await loadFixture (deploy);
-    const [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ()
+            await auction.connect(oracle).setWinner();
 
-    let data1=[5, 175, 75, 10, 0, 0, 2];
-    let data2=[10, 300, 75, 10, 5, 5, 2];
-    let data3=[5, 300, 75, 8, 5, 5, 2];
+            const landsForTransfer = await auction.getAllLandsForTransfer();
+            const landsForSale = await auction.getAllLandsForSale();
+            expect(landsForTransfer).to.include(BigInt(testLandIds[0]));
+            expect(landsForTransfer).to.not.include(BigInt(testLandIds[1]));
+            expect(landsForSale).to.be.empty;
+        });
 
-    //add data
-    await Auction.setRating (user1, data1);
-    await Auction.setRating (user2, data2); 
-    await Auction.setRating (user3, data3);  
-    let aucDate = [];
-    const timeStamp = (await ethers.provider.getBlock("latest")).timestamp;
-    aucDate[0] = timeStamp + 5;
-    aucDate[1] = Math.floor((Date.now()) / 1000) + 3600;
-    await Auction.startReceivingApplications (aucDate[0], [1,2]);
-    await Auction.startReceivingApplications (aucDate[1], [3,4,5]);
+        it("Should refund deposits to non-winners", async function () {
+            const initialBalance1 = await ethers.provider.getBalance(await user1.getAddress());
+            const initialBalance2 = await ethers.provider.getBalance(await user2.getAddress());
 
-    //first application
-    //gameSettings.minPrice + 2**winner/owner + applications 10 + 2**0 + 0 = 11 
-    let deposite = await Auction.connect(user1).depositeForSender ();
-    let price = await Auction.connect(user1).NFTpriceForSender ();
-    expect(price).to.eq(ethers.parseEther('11'));
-    await Auction.connect(user1).applicationNFT (1, {value: deposite});
-   
-    deposite = await Auction.connect(user2).depositeForSender ();
-    price = await Auction.connect(user2).NFTpriceForSender ();
-    expect(price).to.eq(ethers.parseEther('11'));
-    await Auction.connect(user2).applicationNFT (1, {value: deposite});
+            let deposit1 = await auction.connect(user1).depositForSender();
+            let deposit2 = await auction.connect(user2).depositForSender();
+            const tx1 = await auction.connect(user1).applicationNFT(testLandIds[0], { value: deposit1 });
+            let receipt1 = await tx1.wait();
+            if (!receipt1) {
+                throw new Error("Transaction failed (receipt is null)");
+            } 
+            let gasUsed = receipt1.gasUsed;
+            let gasPrice = tx1.gasPrice; 
+            const transactionFee1 = gasUsed * gasPrice;
+            const tx2 = await auction.connect(user2).applicationNFT(testLandIds[0], { value: deposit2 });
+            const receipt2 = await tx2.wait();
+            if (!receipt2) {
+                throw new Error("Transaction failed (receipt is null)");
+            } 
+            gasUsed = receipt2.gasUsed; 
+            gasPrice = tx2.gasPrice; 
+            const transactionFee2 = gasUsed * gasPrice;
+        
+            // Check user1's and user2's deposit
+            let currentBalance1 = await ethers.provider.getBalance(await user1.getAddress());
+            let currentBalance2 = await ethers.provider.getBalance(await user2.getAddress());
+            expect(currentBalance1).to.equal(initialBalance1 - deposit1 - transactionFee1);
+            expect(currentBalance2).to.equal(initialBalance2 - deposit2 - transactionFee2);
+            
+            let blockTime = await time.latest();
+            const localFutureTimestamp = blockTime + (futureTimestamp - blockTime + 1);
 
-    //second application
-    //gameSettings.minPrice + 2**winner/owner + applications 10 + 2**0 + 1 = 12
-    deposite = await Auction.connect(user1).depositeForSender ();
-    price = await Auction.connect(user1).NFTpriceForSender ();
-    expect(price).to.eq(ethers.parseEther('12'));
-    await Auction.connect(user1).applicationNFT (3, {value: deposite});
-   
-    deposite = await Auction.connect(user2).depositeForSender ();
-    price = await Auction.connect(user2).NFTpriceForSender ();
-    expect(price).to.eq(ethers.parseEther('12'));
-    await Auction.connect(user2).applicationNFT (3, {value: deposite});
+            while (blockTime < localFutureTimestamp) {
+                blockTime = await time.latest();
+                await ethers.provider.send("evm_mine"); 
+            }
 
-    //third application
-    //gameSettings.minPrice + 2**winner/owner + applications 10 + 2**0 + 2 = 13
-    deposite = await Auction.connect(user1).depositeForSender ();
-    price = await Auction.connect(user1).NFTpriceForSender ();
-    expect(price).to.eq(ethers.parseEther('13'));
-    await Auction.connect(user1).applicationNFT (4, {value: deposite});
-   
-    deposite = await Auction.connect(user2).depositeForSender ();
-    price = await Auction.connect(user2).NFTpriceForSender ();
-    expect(price).to.eq(ethers.parseEther('13'));
-    await Auction.connect(user2).applicationNFT (4, {value: deposite});
+            await auction.connect(oracle).setWinner();
+            
+            // User1 should have received their deposit back
+            currentBalance1 = await ethers.provider.getBalance(await user1.getAddress());
+            currentBalance2 = await ethers.provider.getBalance(await user2.getAddress());
+            expect(currentBalance1).to.equal(initialBalance1 - deposit1 - transactionFee1);
+            expect(currentBalance2).to.equal(initialBalance2 - transactionFee2);
+        });
 
-    //set winner, user2
-    //gameSettings.minPrice + 2**winner/owner + applications: 10 + 2**0 + 3 = 14
-    price = await Auction.connect(user2).NFTpriceForSender ();
-    expect(price).to.eq(ethers.parseEther('14'));
-    await Auction.setWinner ();
-    //gameSettings.minPrice + 2**winner/owner + applications: 10 + 2**1 + 2 = 14
-    price = await Auction.connect(user2).NFTpriceForSender ();
-    expect(price).to.eq(ethers.parseEther('14'));
-    //gameSettings.minPrice + 2**winner/owner + applications: 10 + 2**0 + 2 = 13
-    price = await Auction.connect(user1).NFTpriceForSender ();
-    expect(price).to.eq(ethers.parseEther('13'));
-    //сделать трансфер победителю. 
-    let [,users,,prices,] = await Auction.connect(user2).getApplicantsByLand (3);
-    const address = (element) => element = user2.address;
-    let key = users.findIndex(address);
-    price = prices[key];
-    await Auction.connect(user2).transferLandToWinner (1, {value: price});
-    //gameSettings.minPrice + 2**winner/owner + applications: 10 + 2**0 + 2 = 13
-    price = await Auction.connect(user2).NFTpriceForSender ();
-    expect(price).to.eq(ethers.parseEther('14'));
-  });
+    });
 
+    describe("setFines Function", function () {
+        const testLandIds = [1, 2, 3]; 
+        const ZERO_ADDRESS = ethers.ZeroAddress;
+        let futureTimestamp = 0;
+        let mintPeriod = 0; 
+        beforeEach(async function () {
+            futureTimestamp = await time.latest() + 50;
+            // Start auction before each test
+            await auction.connect(admin).startReceivingApplications(futureTimestamp, testLandIds);
+            await auction.connect(oracle).setRating(user1.getAddress(), [10, 3, 150, 100, 10, 10, 10]);
+            await auction.connect(oracle).setRating(user2.getAddress(), [5, 7, 100, 50, 10, 10, 10]);
+            await auction.connect(oracle).setRating(user3.getAddress(), [1, 3, 0, 0, 0, 0, 10]);
+            await auction.changeAuctionSettings(1, 10, 20);
+            let tempData = await auction.getContractStatus();
+            mintPeriod = Number(tempData [5]);
+        });
 
-  it ("common functions test", async function (){
-    const {user1, user2, user3, user4, Auction} = await loadFixture (deploy);
-    const [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    
-    let data1=[5, 175, 75, 10, 0, 0, 2];
-    let data2=[10, 300, 75, 10, 5, 5, 2];
-    let data3=[5, 300, 75, 8, 5, 5, 2];
+        it("should revert if called by non-oracle", async function () {
+            await expect(auction.connect(user1).setFines())
+            .to.be.revertedWithCustomError(auction, "NotOracle");
+        });
 
-    //add data
-    await Auction.setRating (user1, data1);
-    await Auction.setRating (user2, data2); 
-    await Auction.setRating (user3, data3);  
-    let aucDate = [];
-    const timeStamp = (await ethers.provider.getBlock("latest")).timestamp;
-    aucDate[0] = timeStamp + 7;
-    aucDate[1] = Math.floor((Date.now()) / 1000) + 3600;
-    await Auction.startReceivingApplications (aucDate[0], [1,2]);
-    await Auction.startReceivingApplications (aucDate[1], [3,4,5]);
+        it("should return empty array when no lands need fines", async function () {
+            const result = await auction.connect(oracle).setFines.staticCall();
+            expect(result).to.be.an('array');
+            expect(result[0]).to.equal (ZERO_ADDRESS);
+        });
 
-    //1
-    let deposite = await Auction.connect(user1).depositeForSender ();
-    //sum = 1
-    let sum = deposite;
-    await Auction.connect(user1).applicationNFT (1, {value: deposite});
-    //1
-    deposite = await Auction.connect(user2).depositeForSender ();
-    //sum = 1 + 1
-    sum += deposite;
-    await Auction.connect(user2).applicationNFT (1, {value: deposite});
+        it("should apply fines for expired, unsold lands", async function () {
 
-    //2
-    deposite = await Auction.connect(user2).depositeForSender ();
-    //sum = 1 + 1 + 2
-    sum += deposite;
-    await Auction.connect(user2).applicationNFT (3, {value: deposite});
-    //1
-    deposite = await Auction.connect(user3).depositeForSender ();
-    //sum = 1 + 1 + 2 + 1
-    sum += deposite;
-    await Auction.connect(user3).applicationNFT (3, {value: deposite});
-    expect(await Auction.getContractBalance()).to.eq(ethers.parseEther('5'));
+            const deposit1 = await auction.connect(user1).depositForSender();
+            const deposit2 = await auction.connect(user2).depositForSender();
+            const deposit3 = await auction.connect(user3).depositForSender();
+            
+            await auction.connect(user1).applicationNFT(testLandIds[0], { value: deposit1 });
+            await auction.connect(user2).applicationNFT(testLandIds[0], { value: deposit2 });
+            await auction.connect(user3).applicationNFT(testLandIds[0], { value: deposit3 });
 
-    await Auction.setWinner ();
-    //balance after applications 5 - 1 = 4 (returned to loser)
-    expect(await Auction.getContractBalance()).to.eq(ethers.parseEther('4'));
-    let [,users,,prices,] = await Auction.connect(user2).getApplicantsByLand (1);
-    const address = (element) => element = user2.address;
-    let key = users.findIndex(address);
-    let price = prices[key];
-    await Auction.connect(user2).transferLandToWinner (1, {value: price});
-    
-    //balance after winner transfer 4+11 = 15
-    expect(await Auction.getContractBalance()).to.eq(ethers.parseEther('15'));
-    //withdrawall by not the owner
-    await expect(Auction.connect(user2).withdrawTokens (user1, ethers.parseEther('5'))).to.be.reverted;
+            let blockTime = await time.latest();
+            const localFutureTimestamp = blockTime + (futureTimestamp - blockTime + 1);
 
-    //withdrawall over balance is
-    await expect(Auction.withdrawTokens (user1, ethers.parseEther('50'))).to.be.revertedWith("Insufficient balance");
-    //correct withdrawall
-    await Auction.withdrawTokens (user1, ethers.parseEther('5'));
-    expect(await Auction.getContractBalance()).to.eq(ethers.parseEther('10'));
-  });
+            while (blockTime < localFutureTimestamp) {
+                blockTime = await time.latest();
+                await ethers.provider.send("evm_mine"); 
+            }
 
-  it ("events", async function (){
-    const {user1, user2, user3, user4, Auction} = await loadFixture (deploy);
-    const [curentOwner, admin, oracle, minDeposit, minPrice, mintPeriod, auctionNumber] = await Auction.getContractStatus ();
-    await Auction.connect(user1).changeAdmin(user2);
-    //ChangeAdminSucsess
-    let filter1 = Auction.filters.ChangeAdminSucsess;
-    let blockNumber = await ethers.provider.getBlockNumber();
-    let events1 = await Auction.queryFilter(filter1, 0, blockNumber);
-    expect(events1.length).to.eq(1);
-    //ChangeSettingsSucsess
-    let val = 5;
-    await Auction.connect(user2).changeAuctionSettings (val, 15, 104800);
-    let filter2= Auction.filters.ChangeSettingsSucsess;
-    blockNumber = await ethers.provider.getBlockNumber();
-    let events2 = await Auction.queryFilter(filter2, 0, blockNumber);
+            await auction.connect(oracle).setWinner();
 
-    expect(events2[0].args[0]).to.eq(user2);
-    expect(events2[0].args[1][0]).to.eq(val);
-    //TokensReceived
-    await user2.sendTransaction({to: Auction.target, value: ethers.parseEther("2.0")});
-    let filter3= Auction.filters.TokensReceived;
-    blockNumber = await ethers.provider.getBlockNumber();
-    let events3 = await Auction.queryFilter(filter3, 0, blockNumber);
-    expect(events3[0].args[1]).to.eq(ethers.parseEther("2.0"));
-    //TokensWithdrawn
-    await Auction.connect(user1).withdrawTokens (user3, ethers.parseEther("1.0"));
-    let filter4= Auction.filters.TokensWithdrawn;
-    blockNumber = await ethers.provider.getBlockNumber();
-    let events4 = await Auction.queryFilter(filter4, 0, blockNumber);
-    expect(events4[0].args[0]).to.eq(user1);
-    expect(events4[0].args[2]).to.eq(ethers.parseEther("1.0"));
-    //ChangeOracleSucsess
-    await Auction.connect(user1).changeOracle(user2);
-    let filter5= Auction.filters.ChangeOracleSucsess;
-    blockNumber = await ethers.provider.getBlockNumber();
-    let events5 = await Auction.queryFilter(filter5, 0, blockNumber);
-    expect(events5[0].args[1]).to.eq(user2);
-  });
+            blockTime = await time.latest();
+            const localFutureTimestamp2 = blockTime + mintPeriod;
+            while (blockTime < localFutureTimestamp2) {
+                blockTime = await time.latest();
+                await ethers.provider.send("evm_mine"); 
+            }
+      
+            const result1 = await auction.connect(oracle).setFines.staticCall();
+            const userAddress = await user1.getAddress();
+            expect(result1[0]).to.equal(userAddress);
+            await auction.connect(oracle).setFines();
+            expect(await auction.getFines(userAddress)).to.equal(1);
+        });
+
+        it("should not fine transfered lands", async function () {
+            const deposit1 = await auction.connect(user1).depositForSender();
+            const deposit2 = await auction.connect(user2).depositForSender();
+            const deposit3 = await auction.connect(user3).depositForSender();
+            
+            await auction.connect(user1).applicationNFT(testLandIds[0], { value: deposit1 });
+            await auction.connect(user2).applicationNFT(testLandIds[0], { value: deposit2 });
+            await auction.connect(user3).applicationNFT(testLandIds[0], { value: deposit3 });
+
+            let blockTime = await time.latest();
+            const localFutureTimestamp = blockTime + (futureTimestamp - blockTime + 1);
+
+            while (blockTime < localFutureTimestamp) {
+                blockTime = await time.latest();
+                await ethers.provider.send("evm_mine"); 
+            }
+
+            await auction.connect(oracle).setWinner();
+            const price1 = await auction.connect(user1).NFTpriceForSender();
+            await auction.connect(user1).transferLandToWinner(1, { value: price1 });
+
+            const result1 = await auction.connect(oracle).setFines.staticCall();
+            const userAddress = await user1.getAddress();
+            expect(result1[0]).to.not.equal(userAddress);
+            await auction.connect(oracle).setFines();
+            expect(await auction.getFines(userAddress)).to.equal(0);
+
+        });
+
+        it("should remove fined lands from transfer array / landsForSale mapping", async function () {
+            const deposit1 = await auction.connect(user1).depositForSender();
+            const deposit2 = await auction.connect(user2).depositForSender();
+            const deposit3 = await auction.connect(user3).depositForSender();
+            
+            await auction.connect(user1).applicationNFT(testLandIds[0], { value: deposit1 });
+            await auction.connect(user2).applicationNFT(testLandIds[0], { value: deposit2 });
+            await auction.connect(user3).applicationNFT(testLandIds[0], { value: deposit3 });
+
+            let blockTime = await time.latest();
+            const localFutureTimestamp = blockTime + (futureTimestamp - blockTime + 1);
+
+            while (blockTime < localFutureTimestamp) {
+                blockTime = await time.latest();
+                await ethers.provider.send("evm_mine"); 
+            }
+
+            await auction.connect(oracle).setWinner();
+
+            blockTime = await time.latest();
+            const localFutureTimestamp2 = blockTime + mintPeriod;
+            while (blockTime < localFutureTimestamp2) {
+                blockTime = await time.latest();
+                await ethers.provider.send("evm_mine"); 
+            }
+            
+            const landsForTransfer1 = await auction.getAllLandsForTransfer();
+            expect(landsForTransfer1[0]).to.equal(1);
+
+            const land = await auction.getApplicantsByLand(1);
+            expect(land.length).to.equal(5);
+            
+            await auction.connect(oracle).setFines();
+            const landsForTransfer2 = await auction.getAllLandsForTransfer();
+            expect(landsForTransfer2.length).to.equal(0);
+
+            await expect(auction.getApplicantsByLand(1)).to.be.revertedWithCustomError(auction, "AuctionNotExists");
+        });
+    });
+
+    describe("transferLandToWinner", function () {
+        const testLandIds = [1, 2, 3]; 
+        const ZERO_ADDRESS = ethers.ZeroAddress;
+        let futureTimestamp = 0;
+        let mintPeriod = 0; 
+        beforeEach(async function () {
+            futureTimestamp = await time.latest() + 50;
+            // Start auction before each test
+            await auction.connect(admin).startReceivingApplications(futureTimestamp, testLandIds);
+            await auction.connect(admin).startReceivingApplications(futureTimestamp+200, [4]);
+            await auction.connect(oracle).setRating(user1.getAddress(), [10, 3, 150, 100, 10, 10, 10]);
+            await auction.connect(oracle).setRating(user2.getAddress(), [5, 7, 100, 50, 10, 10, 10]);
+            await auction.connect(oracle).setRating(user3.getAddress(), [1, 3, 0, 0, 0, 0, 10]);
+            await auction.changeAuctionSettings(1, 10, 20);
+            let tempData = await auction.getContractStatus();
+            mintPeriod = Number(tempData [5]);
+
+            const deposit1 = await auction.connect(user1).depositForSender();
+            const deposit2 = await auction.connect(user2).depositForSender();
+            const deposit3 = await auction.connect(user3).depositForSender();
+            
+            await auction.connect(user1).applicationNFT(testLandIds[0], { value: deposit1 });
+            await auction.connect(user2).applicationNFT(testLandIds[0], { value: deposit2 });
+            await auction.connect(user3).applicationNFT(testLandIds[0], { value: deposit3 });
+
+            const deposit1_1 = await auction.connect(user1).depositForSender();
+            const deposit2_1 = await auction.connect(user2).depositForSender();
+            await auction.connect(user1).applicationNFT(4, { value: deposit1_1 });
+            await auction.connect(user2).applicationNFT(testLandIds[1], { value: deposit2_1 });
+            
+
+            let blockTime = await time.latest();
+            const localFutureTimestamp = blockTime + (futureTimestamp - blockTime + 1);
+
+            while (blockTime < localFutureTimestamp) {
+                blockTime = await time.latest();
+                await ethers.provider.send("evm_mine"); 
+            }
+
+            await auction.connect(oracle).setWinner();
+        });
+
+        it("should allow winner to claim the NFT", async function () {
+            let winner;
+            let price;
+            [winner, price] = await auction.getWinner(testLandIds[0]);
+            await expect(
+                auction.connect(user1).transferLandToWinner(testLandIds[0], {
+                value: price,
+                })
+            )
+                .to.emit(mockNFT, "Transfer")
+                .withArgs(auction.getAddress(), winner, testLandIds[0]);
+
+            // Verify land is now owned by winner
+            expect(await mockNFT.ownerOf(testLandIds[0])).to.equal(winner);
+        });
+
+        it("should mark land as sold after transfer", async function () {
+            let winner;
+            let price;
+            [winner, price] = await auction.getWinner(testLandIds[0]);
+            await auction.connect(user1).transferLandToWinner(testLandIds[0], {
+                value: price,
+            });
+
+            const landInfo = await auction.landsForSale(testLandIds[0]);
+            expect(landInfo.isSold).to.be.true;
+            expect(landInfo.isActive).to.be.false;
+        });
+
+        it("should fail if sender is not the winner", async function () {
+            let winner;
+            let price;
+            [winner, price] = await auction.getWinner(testLandIds[0]);
+            await expect(
+                auction.connect(user3).transferLandToWinner(testLandIds[0], {
+                value: price,
+            })
+            ).to.be.revertedWithCustomError(auction, "NotWinner");
+        });
+
+        it("should fail if claim period has expired", async function () {
+            let winner;
+            let price;
+            [winner, price] = await auction.getWinner(testLandIds[0]);
+
+            const settings = await auction.getContractStatus();
+            let blockTime = await time.latest();
+            const localFutureTimestamp = blockTime + Number(settings.mintPeriod);
+
+            while (blockTime < localFutureTimestamp) {
+                blockTime = await time.latest();
+                await ethers.provider.send("evm_mine"); 
+            }
+
+            await expect(
+                auction.connect(user1).transferLandToWinner(testLandIds[0], {
+                value: price,
+                })
+            ).to.be.revertedWithCustomError(auction, "Expired");
+        });
+
+        it("should fail if land already claimed", async function () {
+        // First claim should succeed
+            let winner;
+            let price;
+            [winner, price] = await auction.getWinner(testLandIds[0]);
+            await auction.connect(user1).transferLandToWinner(testLandIds[0], {
+                value: price,
+            });
+
+            // Second claim should fail
+            await expect(
+                auction.connect(user1).transferLandToWinner(testLandIds[0], {
+                value: price,
+                })
+            ).to.be.revertedWithCustomError(auction, "AlreadyClaimed");
+        });
+
+        it("should fail if auction is still active", async function () {
+            let winner;
+            let price;
+            [winner, price] = await auction.getWinner(testLandIds[0]);
+            // Try to claim before auction ends
+            await expect(
+                auction.connect(user1).transferLandToWinner(4, {
+                value: price,
+                })
+            ).to.be.revertedWithCustomError(auction, "AuctionIsActive");
+        });
+
+        it("should fail if insufficient funds sent", async function () {
+            let winner;
+            let price;
+            [winner, price] = await auction.getWinner(testLandIds[0]);
+            price = price - BigInt(1);
+            await expect(
+                auction.connect(user1).transferLandToWinner(testLandIds[0], {
+                value: price,
+                })
+            ).to.be.revertedWithCustomError(auction, "InsufficientFunds");
+        });
+
+        it("should remove land from transfer array after successful claim", async function () {
+            let winner;
+            let price;
+            [winner, price] = await auction.getWinner(testLandIds[0]);
+            // Land should be in transfer array before claim
+            let transferLands = await auction.getAllLandsForTransfer();
+            expect(transferLands).to.include(BigInt(testLandIds[0]));
+            // Claim the land
+            await auction.connect(user1).transferLandToWinner(testLandIds[0], {
+                value: price,
+            });
+
+            // Land should no longer be in transfer array
+            transferLands = await auction.getAllLandsForTransfer();
+            expect(transferLands).to.not.include(BigInt(testLandIds[0]));
+        });
+
+    });
+
+    describe("withdrawTokens function", () => {
+        it("should allow owner to withdraw funds", async () => {
+            // Send some ETH to the contract first
+            const depositAmount = ethers.parseEther("1.0");
+            const contractAddress = await auction.getAddress();
+            await owner.sendTransaction({
+                to: contractAddress,
+                value: depositAmount
+            });
+
+            // Check initial balance
+            const initialBalance = await ethers.provider.getBalance(contractAddress);
+            expect(initialBalance).to.equal(depositAmount);
+
+            // Withdraw half the amount
+            const withdrawAmount = ethers.parseEther("0.5");
+            const recipientAddress = await user1.getAddress();
+            const recipientInitialBalance =  await ethers.provider.getBalance(recipientAddress)
+            
+            await expect(auction.connect(owner).withdrawTokens(recipientAddress, withdrawAmount))
+                .to.emit(auction, "TokensWithdrawn")
+                .withArgs(await owner.getAddress(), recipientAddress, withdrawAmount);
+
+            // Check remaining balance
+            const remainingBalance = await ethers.provider.getBalance(contractAddress);
+            expect(remainingBalance).to.equal(depositAmount - withdrawAmount);
+
+            // Check recipient received funds
+            const recipientBalance = await ethers.provider.getBalance(recipientAddress);
+            expect(recipientBalance).to.equal(recipientInitialBalance + withdrawAmount); 
+        });
+
+        it("should revert if non-owner tries to withdraw", async () => {
+            const amount = ethers.parseEther("0.1");
+            await expect(
+                auction.connect(user1).withdrawTokens(await user1.getAddress(), amount)
+            ).to.be.reverted;
+        });
+
+        it("should revert if recipient is zero address", async () => {
+            const amount = ethers.parseEther("0.1");
+            await expect(
+                auction.connect(owner).withdrawTokens(ethers.ZeroAddress, amount)
+            ).to.be.revertedWithCustomError(auction, "InvalidAddress");
+        });
+
+        it("should revert if contract has insufficient balance", async () => {
+            const contractBalance = await ethers.provider.getBalance(await auction.getAddress());
+            const withdrawAmount = contractBalance + (ethers.parseEther("1.0"));
+            
+            await expect(
+                auction.connect(owner).withdrawTokens(await user1.getAddress(), withdrawAmount)
+            ).to.be.revertedWithCustomError(auction, "InsufficientFunds");
+        });
+
+        it("should emit TokensWithdrawn event on successful withdrawal", async () => {
+            // First fund the contract
+            const contractAddress = await auction.getAddress();
+            await owner.sendTransaction({
+                to: contractAddress,
+                value: ethers.parseEther("0.5")
+            });
+
+            const amount = ethers.parseEther("0.2");
+            const tx = await auction.connect(owner).withdrawTokens(await user1.getAddress(), amount);
+            
+            await expect(tx)
+                .to.emit(auction, "TokensWithdrawn")
+                .withArgs(await owner.getAddress(), await user1.getAddress(), amount);
+        });
+    });
 });
-
-
-
-
